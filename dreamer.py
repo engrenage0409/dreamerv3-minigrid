@@ -3,6 +3,7 @@ import functools
 import os
 import pathlib
 import sys
+import time
 
 os.environ["MUJOCO_GL"] = "osmesa"
 
@@ -298,6 +299,14 @@ def main(config):
         tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
         agent._should_pretrain._once = False
 
+    training_start_time = time.perf_counter()
+    training_start_step = agent._step
+    def format_duration(value):
+        seconds = max(0, int(value))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+
     # make sure eval will be executed once after config.steps
     #while agent._step < config.steps + config.eval_every:
     while agent._step < config.steps:
@@ -333,6 +342,13 @@ def main(config):
             "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
         }
         torch.save(items_to_save, logdir / "latest.pt")
+        elapsed = time.perf_counter() - training_start_time
+        completed = max(0, agent._step - training_start_step)
+        remaining = max(0, config.steps - agent._step)
+        speed = completed / elapsed if elapsed > 0 else 0.0
+        eta = format_duration(remaining / speed) if speed > 0 else "calculating"
+        print(f"Training progress: {agent._step}/{config.steps} ({100 * agent._step / config.steps:.1f}%) | Elapsed: {format_duration(elapsed)} | ETA: {eta} | Speed: {speed:.2f} steps/s", flush=True)
+    print(f"Total training time: {format_duration(time.perf_counter() - training_start_time)}", flush=True)
     for env in train_envs + eval_envs:
         try:
             env.close()
