@@ -1,69 +1,59 @@
 # DreamerV3 MiniGrid
 
-A compact research project for visual navigation in partially observable MiniGrid environments using a DreamerV3-style latent world model.
+A compact research project for visual navigation in partially observable MiniGrid environments using a Dreamer-style discrete latent world model.
 
-> Status: project scaffold in progress. No training results are claimed until experiments are run and evaluated.
+> **Current status: Phase 1 scaffold.** Environment integration, random episode collection, encoder, discrete RSSM, prediction heads, world-model losses and smoke tests are present. The actor-critic imagination learner and trained policy are not implemented yet. No performance results are claimed.
 
 ## Goal
 
-Train an agent from egocentric image observations and discrete actions. The agent learns a recurrent latent dynamics model and improves its policy using imagined rollouts in latent space.
+Learn from egocentric image observations and discrete actions. The intended full agent will learn a recurrent latent dynamics model and improve its policy using imagined rollouts in latent space.
 
-## Planned milestones
+## Milestones
 
-1. **Environment and data pipeline** — MiniGrid wrappers, image observations, episode collection, deterministic evaluation.
-2. **World model** — convolutional encoder/decoder, recurrent state-space model (RSSM), reward and continuation prediction, balanced KL objective.
+1. **Environment and model foundation (current)** — MiniGrid wrapper, image preprocessing, random data collection, convolutional encoder, discrete RSSM, image/reward/continuation heads, balanced KL loss and smoke tests.
+2. **World-model training** — episode sequence dataset, batching, optimizer, checkpointing and reconstruction/prediction diagnostics.
 3. **Behavior learning** — discrete actor-critic trained on imagined trajectories with lambda returns.
-4. **Experiments** — DoorKey and harder navigation tasks, multiple seeds, success rate, episode length, learning curves and ablations.
+4. **Experiments** — DoorKey curriculum, multiple seeds, success rate, episode length, learning curves and ablations.
 
-## Repository layout
+## Layout
 
 ```text
-configs/          Experiment configurations
-dreamer/          Model, distributions, losses and agent
-envs/             MiniGrid environment and wrappers
-scripts/          Training, evaluation and visualization entry points
-tests/            Unit and smoke tests
+configs/          Experiment configuration
+dreamer/          Encoder, RSSM and world model
+envs/             MiniGrid environment and preprocessing
+scripts/          Data collection and smoke-test entry points
+tests/            Unit tests
 results/          Generated metrics and plots (not checkpoints)
 ```
 
-## Quick start
+## Install
 
 Python 3.10 or 3.11 is recommended.
 
 ```bash
 python -m venv .venv
-# Windows PowerShell: .venv\Scripts\Activate.ps1
+# Windows PowerShell: .venv\\Scripts\\Activate.ps1
 # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-python scripts/smoke_test.py
 ```
 
-## Training
-
-The first milestone will expose a reproducible command similar to:
+## Phase 1 checks
 
 ```bash
-python -m scripts.train --config configs/doorkey.yaml
-python -m scripts.evaluate --checkpoint runs/doorkey/best.pt --episodes 100
+python scripts/smoke_test.py
+pytest -q
+python scripts/collect_random.py --episodes 100 --output runs/random_dataset.npz
 ```
 
-The exact training command and expected runtime will be documented after the end-to-end smoke test passes.
+The initial environment is `MiniGrid-DoorKey-8x8-v0`. MiniGrid provides a 7×7×3 egocentric symbolic image and a discrete action space; the wrapper exposes only the image to the model in this baseline.
 
-## Metrics
+## Evaluation protocol
 
-- **Success rate**: fraction of evaluation episodes that reach the goal.
-- **Mean episode return** and **mean episode length**.
-- **Seed-level mean ± standard deviation** for final comparisons.
+The final policy will be evaluated on held-out environment seeds. Report success rate, mean episode return and episode length across multiple seeds; do not use training return as the final score.
 
-## Reproducibility
+## Reproducibility and scope
 
-Every experiment should record its config, random seed, code revision, environment ID and evaluation episode count. Checkpoints, replay buffers, caches and raw training logs are intentionally excluded from Git.
+Record config, random seed, code revision, environment ID and evaluation episode count for each run. Checkpoints, replay buffers, caches and raw training logs are excluded from Git.
 
-## Attribution
-
-This repository is an independent educational/research implementation. It is not an official DreamerV3 release and does not claim exact reproduction of every detail in the original paper. References and implementation provenance will be recorded as upstream components are selected.
-
-## License
-
-A project license will be added after the provenance and licensing of any reused upstream code have been reviewed.
+This is an independent educational/research implementation, not an official DreamerV3 release or a claim of exact reproduction. Upstream components and licenses will be documented before any third-party implementation is incorporated.
