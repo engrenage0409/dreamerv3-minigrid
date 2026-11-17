@@ -18,7 +18,7 @@ class RSSM(nn.Module):
         self.classes = classes
         self.stoch_dim = stoch_groups * classes
         self.gru = nn.GRUCell(self.stoch_dim + action_dim, deter_dim)
-        self.prior = nn.Sequential(nn.Linear(deter_dim, deter_dim), nn. SiLU(),
+        self.prior = nn.Sequential(nn.Linear(deter_dim, deter_dim), nn.SiLU(),
                                    nn.Linear(deter_dim, stoch_groups * classes))
         self.posterior = nn.Sequential(nn.Linear(deter_dim + embed_dim, deter_dim),
                                        nn.SiLU(),
