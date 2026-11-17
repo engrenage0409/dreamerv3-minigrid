@@ -182,3 +182,51 @@ debug:
   prefill: 1
   batch_size: 10
   batch_length: 20
+
+crafter_8gb:
+  task: crafter_reward
+  steps: 1e6
+  action_repeat: 1
+  envs: 1
+  train_ratio: 32
+
+  # Smaller training batches
+  batch_size: 4
+  batch_length: 16
+
+  # Smaller RSSM
+  dyn_hidden: 256
+  dyn_deter: 512
+  dyn_stoch: 32
+  dyn_discrete: 32
+
+  # Smaller networks
+  units: 256
+  encoder:
+    mlp_keys: '$^'
+    cnn_keys: 'image'
+    cnn_depth: 32
+    mlp_layers: 5
+    mlp_units: 256
+  decoder:
+    mlp_keys: '$^'
+    cnn_keys: 'image'
+    cnn_depth: 32
+    mlp_layers: 5
+    mlp_units: 256
+
+  actor:
+    layers: 5
+    dist: onehot
+    std: none
+  value:
+    layers: 5
+  reward_head:
+    layers: 5
+  cont_head:
+    layers: 5
+
+  imag_horizon: 15
+  imag_gradient: reinforce
+  precision: 32
+  video_pred_log: false

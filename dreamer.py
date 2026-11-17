@@ -299,7 +299,8 @@ def main(config):
         agent._should_pretrain._once = False
 
     # make sure eval will be executed once after config.steps
-    while agent._step < config.steps + config.eval_every:
+    #while agent._step < config.steps + config.eval_every:
+    while agent._step < config.steps:
         logger.write()
         if config.eval_episode_num > 0:
             print("Start evaluation.")
