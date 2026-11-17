@@ -69,3 +69,8 @@ class Crafter:
             "is_terminal": False,
         }
         return obs
+
+    def close(self):
+        close = getattr(self._env, 'close', None)
+        if callable(close):
+            close()
