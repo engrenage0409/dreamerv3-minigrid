@@ -1,0 +1,14 @@
+env_id: MiniGrid-DoorKey-8x8-v0
+seed: 7
+device: auto
+episodes: 100
+max_steps: 256
+batch_size: 16
+sequence_length: 32
+dataset_size: 10000
+hidden_size: 256
+stoch_groups: 16
+classes: 16
+learning_rate: 0.0003
+kl_balance: 0.8
+free_nats: 1.0
