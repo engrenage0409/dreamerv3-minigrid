@@ -142,6 +142,9 @@ def main():
         default="logdir/crafter_smoke_test/evaluation",
     )
     parser.add_argument("--fps", type=int, default=10)
+    parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--policy", choices=["mode", "sample", "both"], default="both")
+    parser.add_argument("--video", action="store_true", help="Save a dashboard video for the first episode of each policy")
     parser.add_argument("--max_steps", type=int, default=1000)
     args = parser.parse_args()
 
@@ -201,135 +204,166 @@ def main():
     font = load_font(20)
     title_font = load_font(24)
 
-    video_path = output / "crafter_agent_dashboard.mp4"
 
-    obs = env.reset()
-    state = None
-    done = True
-    total_reward = 0.0
-    achievements = {}
-    inventory = {}
-    action_counts = {}
-    steps = 0
+    # Keep evaluation deterministic across policy comparisons, while allowing
+    # independent action sampling in sample mode.
+    if args.episodes < 1:
+        parser.error("--episodes must be >= 1")
 
-    try:
-        with imageio.get_writer(
-            str(video_path),
-            fps=args.fps,
-            codec="libx264",
-            macro_block_size=1,
-        ) as writer:
-
-            first_frame = draw_frame(
-                obs, 0, "START", 0.0, 0.0,
-                inventory, achievements,
-                font, title_font,
+    summaries = {}
+    for policy_kind in (["mode", "sample"] if args.policy == "both" else [args.policy]):
+        episode_results = []
+        for episode_index in range(args.episodes):
+            # Each policy uses the same environment seed for a given episode.
+            # Recreate the environment so resets do not depend on prior episodes.
+            if episode_index == 0:
+                env.close()
+            config.seed = int(load_config().seed) + episode_index
+            episode_env = dreamer.make_env(config, "eval", 0)
+            obs = episode_env.reset()
+            state = None
+            done = True
+            total_reward = 0.0
+            achievements = {}
+            inventory = {}
+            action_counts = {}
+            prob_sums = np.zeros(config.num_actions, dtype=np.float64)
+            entropy_sum = 0.0
+            steps = 0
+            video_path = output / f"crafter_{policy_kind}_episode_001.mp4"
+            writer = None
+            try:
+                if args.video and episode_index == 0:
+                    writer = imageio.get_writer(
+                        str(video_path), fps=args.fps,
+                        codec="libx264", macro_block_size=1,
+                    )
+                    writer.append_data(draw_frame(
+                        obs, 0, "START", 0.0, 0.0,
+                        inventory, achievements, font, title_font,
+                    ))
+                for step in range(args.max_steps):
+                    batch = {
+                        key: np.expand_dims(np.asarray(value), 0)
+                        for key, value in obs.items()
+                        if not key.startswith("log_")
+                    }
+                    with torch.no_grad():
+                        # Call _policy once to advance the recurrent state.
+                        # It returns mode in evaluation, and we optionally
+                        # sample from the SAME actor distribution.
+                        policy, next_state = agent(
+                            batch, np.array([done], dtype=bool),
+                            state, training=False,
+                        )
+                        latent, _ = next_state
+                        feat = agent._wm.dynamics.get_feat(latent)
+                        actor = agent._task_behavior.actor(feat)
+                        probabilities = actor.probs[0].detach().cpu().numpy()
+                        if policy_kind == "sample":
+                            chosen = actor.sample()[0].detach()
+                        else:
+                            chosen = policy["action"][0].detach()
+                        action_index = int(torch.argmax(chosen).item())
+                        action = torch.nn.functional.one_hot(
+                            torch.tensor(action_index, device=chosen.device),
+                            num_classes=config.num_actions,
+                        ).to(chosen.dtype).cpu().numpy()
+                        # Recurrent state must use the action actually executed.
+                        state = (latent, torch.as_tensor(
+                            action, device=chosen.device,
+                        ).unsqueeze(0))
+                    prob_sums += probabilities
+                    entropy_sum += float(
+                        -(probabilities * np.log(
+                            np.clip(probabilities, 1e-12, 1.0)
+                        )).sum()
+                    )
+                    action_name = (
+                        ACTION_NAMES[action_index]
+                        if action_index < len(ACTION_NAMES)
+                        else f"action_{action_index}"
+                    )
+                    obs, reward, done, info = episode_env.step({"action": action})
+                    steps += 1
+                    total_reward += float(reward)
+                    action_counts[action_name] = action_counts.get(action_name, 0) + 1
+                    if info:
+                        inventory = dict(info.get("inventory", inventory))
+                        achievements = dict(info.get("achievements", achievements))
+                    if writer is not None:
+                        writer.append_data(draw_frame(
+                            obs, steps, action_name, float(reward),
+                            total_reward, inventory, achievements,
+                            font, title_font,
+                        ))
+                    if done:
+                        break
+            finally:
+                if writer is not None:
+                    writer.close()
+                episode_env.close()
+            item = {
+                "episode": episode_index + 1,
+                "seed": config.seed,
+                "episode_return": total_reward,
+                "episode_length": steps,
+                "episode_done": bool(done),
+                "achievements": achievements,
+                "final_inventory": inventory,
+                "action_counts": action_counts,
+                "mean_action_probabilities": {
+                    name: float(prob_sums[i] / max(steps, 1))
+                    for i, name in enumerate(ACTION_NAMES[:config.num_actions])
+                },
+                "mean_actor_entropy_nats": entropy_sum / max(steps, 1),
+            }
+            if writer is not None:
+                item["video"] = str(video_path)
+            episode_results.append(item)
+            print(
+                f"{policy_kind} episode {episode_index + 1}/{args.episodes}: "
+                f"return={total_reward:.3f} length={steps} "
+                f"entropy={item['mean_actor_entropy_nats']:.3f}"
             )
-            writer.append_data(first_frame)
-
-            for step in range(args.max_steps):
-                batch = {
-                    key: np.expand_dims(np.asarray(value), 0)
-                    for key, value in obs.items()
-                    if not key.startswith("log_")
-                }
-
-                with torch.no_grad():
-                    policy, state = agent(
-                        batch,
-                        np.array([done], dtype=bool),
-                        state,
-                        training=False,
-                    )
-
-                action = (
-                    policy["action"][0]
-                    .detach().cpu().numpy()
-                )
-
-                action_index = int(np.argmax(action))
-                action_name = (
-                    ACTION_NAMES[action_index]
-                    if action_index < len(ACTION_NAMES)
-                    else f"action_{action_index}"
-                )
-
-                obs, reward, done, info = env.step(
-                    {"action": action}
-                )
-
-                steps += 1
-                total_reward += float(reward)
-                action_counts[action_name] = (
-                    action_counts.get(action_name, 0) + 1
-                )
-
-                if info:
-                    inventory = dict(
-                        info.get("inventory", inventory)
-                    )
-                    achievements = dict(
-                        info.get("achievements", achievements)
-                    )
-
-                frame = draw_frame(
-                    obs,
-                    steps,
-                    action_name,
-                    float(reward),
-                    total_reward,
-                    inventory,
-                    achievements,
-                    font,
-                    title_font,
-                )
-                writer.append_data(frame)
-
-                if steps % 100 == 0 or done:
-                    print(
-                        f"Step {steps} | "
-                        f"Reward {total_reward:.2f} | "
-                        f"Action {action_name}"
-                    )
-
-                if done:
-                    break
-    finally:
-        try:
-            env.close()
-        except AttributeError:
-            pass
-
+        returns = np.array([x["episode_return"] for x in episode_results])
+        lengths = np.array([x["episode_length"] for x in episode_results])
+        achievement_success = {
+            name: float(np.mean([
+                x["achievements"].get(name, 0) > 0
+                for x in episode_results
+            ]))
+            for name in episode_results[0]["achievements"]
+        }
+        summaries[policy_kind] = {
+            "num_episodes": len(episode_results),
+            "mean_return": float(returns.mean()),
+            "std_return": float(returns.std()),
+            "mean_length": float(lengths.mean()),
+            "mean_actor_entropy_nats": float(np.mean([
+                x["mean_actor_entropy_nats"] for x in episode_results
+            ])),
+            "achievement_success_rate": achievement_success,
+            "episodes": episode_results,
+        }
     result = {
         "checkpoint": str(checkpoint_path),
-        "episode_return": total_reward,
-        "episode_length": steps,
-        "episode_done": bool(done),
-        "achievements": achievements,
-        "final_inventory": inventory,
-        "action_counts": action_counts,
-        "video": str(video_path),
+        "policy": args.policy,
+        "max_steps": args.max_steps,
+        "summaries": summaries,
     }
-
-    result_path = output / "eval_result.json"
+    result_path = output / "eval_diagnostics.json"
     result_path.write_text(
-        json.dumps(
-            result,
-            indent=2,
-            ensure_ascii=False,
-        ),
+        json.dumps(result, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-
-    print("\nEvaluation complete!")
-    print("Reward:", total_reward)
-    print("Steps:", steps)
-    print("Actions:", action_counts)
-    print("Achievements:", {
-        k: v for k, v in achievements.items() if v > 0
-    })
-    print("Video:", video_path)
-    print("Results:", result_path)
+    print("\\nDiagnostics saved:", result_path)
+    for name, summary in summaries.items():
+        print(
+            f"{name}: mean_return={summary['mean_return']:.3f} "
+            f"std={summary['std_return']:.3f} "
+            f"mean_entropy={summary['mean_actor_entropy_nats']:.3f}"
+        )
 
 
 if __name__ == "__main__":
